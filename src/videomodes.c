@@ -14,8 +14,8 @@ void videoSetSlideMode(void)
      16 bit text mode with 100 character virtual line length.
     */
 
-    // 60Hz video mode
-    POKE(0xD06fU,0x80);
+    // 50Hz PAL video mode for 576p
+    POKE(0xD06fU,0x00);
 
     // 16-bit text mode, 640H sprites, alpha blender, 50MHz CPU, full-colour for chars >$FF
     POKE(0xd054U,0xD5);
@@ -37,8 +37,8 @@ void videoSetSlideMode(void)
     // Enable sprite 0 (cursor)
     POKE(0xD015U,0x01);
 
-    // No side borders
-    POKE(0xD05CU, 0x00);
+    // Minimum side borders for 720px mode
+    POKE(0xD05CU, 40-2); // (800 - 720 ) / 2 = 40
     POKE(0xD05DU, PEEK(0xD05DU) & 0x80);
 
     // Set H640 and V400 and enable extended attributes and 8-bit colour values
@@ -67,6 +67,9 @@ void videoSetSlideMode(void)
     // Disable VicII hot registers
     DISABLE_HOT_REGISTERS(); // 0xD05D
 
+    // Align left edge of text appropriately
+    POKE(0xD04CU, 40); // (800 - 720 ) / 2 = 40
+    
     // Disable maskable interrupts (MEGA+SHIFT)
     __asm__("sei");
 

@@ -5,6 +5,7 @@ SRCDIR=		src
 OBJDIR=		obj
 BINDIR=		bin
 ROMDIR=		rom
+TMPDIR=		tmp
 ASTDIR=		assets
 MKDIRS=		$(SRCDIR) $(OBJDIR) $(BINDIR) $(ROMDIR)
 
@@ -18,6 +19,7 @@ CBMCONVDIR=	cbmconvert
 FONTRSTDIR=	c65gs-font-rasteriser
 XEMUDIR=	../xemu
 COREDIR=	../mega65-core
+TOOLSDIR=	../mega65-tools
 # CC65DIR=	$(COREDIR)/cc65
 # CBMCONVDIR=	$(COREDIR)/cbmconvert
 # FONTRSTDIR=	../c65gs-font-rasteriser
@@ -30,31 +32,27 @@ FILES=		$(PROGRAM) \
 			autoboot.c65 \
 			c64-m65.cfg
 
-SOURCES=	$(SRCDIR)/main.c \
+C_SOURCE=	$(SRCDIR)/main.c \
 			$(SRCDIR)/megastring.c \
 			$(SRCDIR)/editor.c \
 			$(SRCDIR)/videomodes.c \
 			$(SRCDIR)/memory.c \
-			$(SRCDIR)/fast_memory.s \
 			$(SRCDIR)/f65.c \
 			$(SRCDIR)/globals.c \
-			$(SRCDIR)/fileio.c \
+			$(SRCDIR)/fileio.c
+
+S_SOURCE=	$(SRCDIR)/fast_memory.s \
 			$(SRCDIR)/font_load.s \
 			$(SRCDIR)/charset.s \
 			$(SRCDIR)/romprotection.s
 
-ASSFILES=	$(OBJDIR)/main.s \
-			$(OBJDIR)/megastring.s \
-			$(OBJDIR)/editor.s \
-			$(OBJDIR)/videomodes.s \
-			$(OBJDIR)/memory.s \
-			$(OBJDIR)/fast_memory.s \
-			$(OBJDIR)/f65.s \
-			$(OBJDIR)/globals.s \
-			$(OBJDIR)/fileio.s \
-			$(OBJDIR)/font_load.s \
-			$(OBJDIR)/charset.s \
-			$(OBJDIR)/romprotection.s
+MEGAWAT_FILES=	$(C_SOURCE:$(SRCDIR)/%.c=$(OBJDIR)/%.c.o) \
+			$(S_SOURCE:$(SRCDIR)/%.s=$(OBJDIR)/%.s.o)
+
+SPLASH_FILES=	$(OBJFILES)/fast_memory.s.o \
+			$(OBJDIR)/splash.s.o \
+			$(OBJDIR)/loader.c.o \
+			$(OBJDIR)/memory.c.o
 
 HEADERS=	Makefile \
 			c64-m65.cfg \
@@ -88,12 +86,13 @@ ifeq ($(F1_EXISTS), 1)
 C65SYSROM=	c65.rom
 else
 C65SYSROM=	$(ROMDIR)/911001.bin.rom
+# C65SYSROM=	$(ROMDIR)/911210.bin.rom
 endif
 
-MONLOAD=	$(COREDIR)/src/tools/monitor_load
-KICKUP=		$(COREDIR)/bin/KICKUP.M65
-BITSTRM=	$(COREDIR)/bin/nexys4ddr-widget-20190116.16-newpix-b686673+DIRTY.bit
-CHARROM=	$(COREDIR)/charrom.bin
+MONLOAD=	$(TOOLSDIR)/bin/m65
+KICKUP=		$(COREDIR)/bin/HICKUP.M65
+BITSTRM=	$(COREDIR)/bin/nexys4.bit
+CHARROM=	$(COREDIR)/bin/charrom.bin
 
 TTFTOF65=	$(FONTRSTDIR)/ttftof65
 
@@ -104,13 +103,13 @@ all:		$(FILES) | $(MKDIRS)
 clean: clean-obj clean-bin clean-font
 
 clean-obj:
-	if [ -d $(OBJDIR) ]; then cd $(OBJDIR) && rm -f *; fi
+	rm -rf $(OBJDIR)
 
 clean-bin:
-	if [ -d $(BINDIR) ]; then cd $(BINDIR) && rm -f *; fi
+	rm -rf $(BINDIR)
 
 clean-rom:
-	if [ -d $(ROMDIR) ]; then cd $(ROMDIR) && rm -f *; fi
+	rm -rf $(ROMDIR)
 
 clean-font:
 	rm -f *.f65
@@ -135,9 +134,14 @@ load:		$(MONLOAD) $(C65SYSROM) $(PROGRAM)
 %.f65:	%.ttf Makefile $(TTFTOF65)
 	$(TTFTOF65) -A -P 8 -T $< -o $@
 
-$(OBJDIR)/%.s:		$(SOURCES) $(HEADERS) $(DATAFILES) $(CC65) | $(OBJDIR)
-	if [ -f $(SRCDIR)/$*.c ]; then $(CC65) $(C65OPTS) -o $@ $(SRCDIR)/$*.c; fi
-	if [ -f $(SRCDIR)/$*.s ]; then cp $(SRCDIR)/$*.s $@; fi
+$(ROMDIR)/911210.zip:	| $(ROMDIR)
+	$(WGET) -O $@ http://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c65/911210.zip || { rm -f $@ ; false; }
+
+$(ROMDIR)/folder_911210/911210.bin: $(ROMDIR)/911210.zip
+	unzip -u $< -d $(ROMDIR)
+
+$(ROMDIR)/911210.bin.rom: $(ROMDIR)/folder_911210/911210.bin
+	cp $< $@
 
 $(ROMDIR)/%.rom:	| $(ROMDIR)
 	$(WGET) -O $@ http://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c65/$* || { rm -f $@ ; false; }
@@ -145,11 +149,14 @@ $(ROMDIR)/%.rom:	| $(ROMDIR)
 $(OBJDIR)/%.FPK:	Makefile $(ASTDIR)/*.ttf $(ASTDIR)/*.otf $(TTFTOF65) | $(ASTDIR) $(OBJDIR)
 	./makefonts.sh $@ > /dev/null
 
-$(BINDIR)/%.prg:	$(ASSFILES) c64-m65.cfg | $(BINDIR)
-	$(CL65) $(C65OPTS) $(L65OPTS) -vm -m $@.map -o $@ $(ASSFILES)
+$(OBJDIR)/%.o:		$(SRCDIR)/% $(HEADERS) $(DATAFILES) $(CC65) | $(OBJDIR)
+	$(CL65) $(C65OPTS) -o $@ -c $<
 
-$(BINDIR)/loader.prg:	src/fast_memory.s src/splash.s src/loader.c src/memory.c src/memory.h Makefile $(ASTDIR)/megawat-splash.m65
-	$(CL65) $(C65OPTS) $(L65OPTS) -vm -m $@.map -o $@ src/splash.s src/loader.c src/memory.c src/fast_memory.s
+$(PROGRAM): $(MEGAWAT_FILES) $(HEADERS) c64-m65.cfg | $(BINDIR)
+	$(CL65) $(C65OPTS) $(L65OPTS) -vm -m $@.map -o $@ $(filter %.o, $^)
+
+$(BINDIR)/loader.prg:	$(SPLASH_FILES) $(HEADERS) $(ASTDIR)/megawat-splash.m65 | $(BINDIR)
+	$(CL65) $(C65OPTS) $(L65OPTS) -vm -m $@.map -o $@ $(filter %.o, $^)
 
 $(BINDIR)/%.fprg:	Makefile $(OBJDIR)/%.FPK $(BINDIR)/%.prg $(C65SYSROM)
 	#	Generate single binary with fonts and ROM in place
@@ -160,18 +167,9 @@ $(BINDIR)/%.fprg:	Makefile $(OBJDIR)/%.FPK $(BINDIR)/%.prg $(C65SYSROM)
 	dd if=$(C65SYSROM) bs=1024 count=128 of=$@ oflag=append conv=notrunc
 	dd if=$(OBJDIR)/$*.FPK bs=1024 count=128 of=$@ oflag=append conv=notrunc
 
-$(BINDIR)/MEGAWAT.D81:	assets/PART1 bin/loader.prg bin/megawat.prg assets/*.mwt* assets/lca2019-cover.prg
-	rm -fr $(BINDIR)/MEGAWAT.D81 tmp
-	mkdir tmp
-	cp assets/*.mwt* assets/lca2019-cover.prg tmp/
-	cp assets/PART1 tmp/part1
-	cp bin/loader.prg tmp/megawat
-	cp bin/megawat.prg tmp/part2
-	(cd tmp ; cbmconvert -D8 ../$(BINDIR)/MEGAWAT.D81 * )
-
-#$(BINDIR)/%.D81:	$(CBMCONVERT) $(FILES) | $(BINDIR)
-#	if [ -f $@ ]; then rm -f $@; fi
-#	$(CBMCONVERT) -v2 -D8o $@ $(FILES)
+$(BINDIR)/%.D81:	$(CBMCONVERT) $(FILES) | $(BINDIR)
+	if [ -f $@ ]; then rm -f $@; fi
+	$(CBMCONVERT) -v2 -D8o $@ $(FILES)
 
 define DIR_TEMPLATE =
 $(1):
@@ -183,20 +181,21 @@ $(foreach dir,$(MKDIRS),$(eval $(call DIR_TEMPLATE,$(dir))))
 # TOOLS
 
 cbmconvert/cbmconvert:
-	git submodule init
-	git submodule update
+	git submodule update --init cbmconvert
 	( cd cbmconvert && make -f Makefile.unix )
 
 cc65/bin/cc65:
-	git submodule init
-	git submodule update
-	( cd cc65 && make -j 8 )
-
-$(MONLOAD):
-	( cd $(COREDIR) && make src/tools/monitor_load )
+	git submodule update --init cc65
+	( cd cc65 && make -j8 )
 
 $(TTFTOF65):
-	( cd $(FONTRSTDIR) ; make )
+	( cd $(FONTRSTDIR) && $(MAKE) )
+
+$(TOOLSDIR)/%:
+	( cd $(TOOLSDIR) && $(MAKE) $(shell realpath --relative-to $(TOOLSDIR) $@) )
+
+$(COREDIR)/%:
+	( cd $(COREDIR) && $(MAKE) $(shell realpath --relative-to $(COREDIR) $@) )
 
 .DEFAULT:
 	$(error Could not find file $@)
